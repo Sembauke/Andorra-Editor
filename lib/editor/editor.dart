@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:phone_ide/controller/custom_text_controller.dart';
@@ -44,39 +45,53 @@ class EditorState extends State<Editor> {
   int _currNumLines = 1;
 
   double _initialWidth = 28;
+  double _height = 0;
 
   String currentFileId = '';
 
-  void updateLineCount(FileIDE file, String event, String region) async {
-    late String lines;
+  updateLineCount(double? totalHeight) async {
+    totalHeight = totalHeight ?? 48;
+    _height = totalHeight;
+    double totalLines = totalHeight / getTextHeight(context);
 
-    if (widget.options.hasRegion) {
-      switch (region) {
-        case 'BEFORE':
-          lines =
-              event + '\n' + inController.text + '\n' + afterController.text;
-          break;
-        case 'IN':
-          lines = beforeController.text +
-              '\n' +
-              event +
-              '\n' +
-              afterController.text;
-          break;
-        case 'AFTER':
-          lines =
-              beforeController.text + '\n' + inController.text + '\n' + event;
-          break;
-      }
-    }
-
-    if (!widget.options.hasRegion) {
-      lines = event;
-    }
+    double totalHeightWithoutPadding = totalHeight - totalLines * 3;
+    double totalLinesWithoutPadding =
+        totalHeightWithoutPadding / getTextHeight(context);
 
     setState(() {
-      _currNumLines = lines.split('\n').length;
+      _currNumLines = totalLinesWithoutPadding.toInt() + 1;
     });
+  }
+
+  getLineInformation(BuildContext context) {
+    String text = beforeController.text +
+        '\n' +
+        inController.text +
+        '\n' +
+        afterController.text;
+
+    List<String> countNewLines(List<String> textArr) {
+      for (int i = 0; i < textArr.length; i++) {
+        if (textArr[i].length > 35) {
+          int spacesCounted = 0;
+
+          for (int j = 0; j < textArr[i].length; j++) {
+            if (j <= 35) {
+              if (textArr[i][j] == ' ') {
+                spacesCounted++;
+              }
+            }
+          }
+
+          String nextLine = textArr[i].split(' ')[spacesCounted];
+          textArr.insert(i + 1, nextLine + textArr[i].split(nextLine)[1]);
+          textArr[i] = textArr[i].split(nextLine)[0];
+        }
+      }
+      return textArr;
+    }
+
+    List<String> textLines = countNewLines(text.split('\n'));
   }
 
   double getTextHeight(BuildContext context, {double fontSize = 18}) {
@@ -192,25 +207,23 @@ class EditorState extends State<Editor> {
     );
   }
 
-  handleTextChange(FileIDE file, String event, String region) {
-    updateLineCount(file, event, region);
-
+  handleTextChange(FileIDE file, String code, String region) {
     if (file.hasRegion && region != 'AFTER') {
-      handleRegionCaching(file, event, region);
+      handleRegionCaching(file, code, region);
     }
 
     late String text;
 
     switch (region) {
       case 'BEFORE':
-        text = event + '\n' + inController.text + '\n' + afterController.text;
+        text = code + '\n' + inController.text + '\n' + afterController.text;
         break;
       case 'IN':
         text =
-            beforeController.text + '\n' + event + '\n' + afterController.text;
+            beforeController.text + '\n' + code + '\n' + afterController.text;
         break;
       case 'AFTER':
-        text = beforeController.text + '\n' + inController.text + '\n' + event;
+        text = beforeController.text + '\n' + inController.text + '\n' + code;
         break;
     }
 
@@ -274,105 +287,130 @@ class EditorState extends State<Editor> {
 
   Widget editorView(BuildContext context, FileIDE file) {
     return ListView(
-      padding: const EdgeInsets.only(top: 0),
+      padding: const EdgeInsets.only(
+        top: 0,
+      ),
       scrollDirection: Axis.horizontal,
+      physics: widget.options.wrap
+          ? const NeverScrollableScrollPhysics()
+          : const ScrollPhysics(),
       controller: horizontalController,
       children: [
         SizedBox(
           height: 1000,
-          width: 2500,
+          width: widget.options.wrap ? MediaQuery.of(context).size.width : 2500,
           child: ListView(
-            padding: const EdgeInsets.only(top: 10),
+            padding: widget.options.editorPadding,
             controller: scrollController,
-            scrollDirection: Axis.vertical,
+            physics: const ClampingScrollPhysics(),
             shrinkWrap: true,
             children: [
-              if (file.hasRegion)
-                SizedBox(
-                  width: 2500,
-                  child: TextField(
-                    controller: beforeController,
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      fillColor: widget.options.editorBackgroundColor,
-                      filled: true,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.only(
-                        left: 10,
-                      ),
-                    ),
-                    maxLines: null,
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.white.withOpacity(0.87),
-                    ),
-                    onChanged: (String event) {
-                      handleTextChange(file, event, 'BEFORE');
-                    },
-                  ),
-                ),
-              Container(
-                width: 2500,
-                decoration: file.hasRegion
-                    ? BoxDecoration(
-                        border: Border(
-                          left: BorderSide(
-                            width: 5,
-                            color: file.region.condition
-                                ? Colors.green
-                                : Colors.grey,
+              LayoutBuilder(
+                builder: (localContext, constraints) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (localContext.size?.height != _height) {
+                      updateLineCount(localContext.size?.height);
+                    }
+                  });
+
+                  return Column(
+                    children: [
+                      if (file.hasRegion)
+                        TextField(
+                          smartQuotesType: SmartQuotesType.disabled,
+                          smartDashesType: SmartDashesType.disabled,
+                          controller: beforeController,
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            fillColor: widget.options.editorBackgroundColor,
+                            filled: true,
+                            isDense: true,
+                            contentPadding: EdgeInsets.only(
+                              left: 10,
+                              right: widget.options.wrap ? _initialWidth : 0,
+                            ),
+                          ),
+                          maxLines: null,
+                          keyboardType: TextInputType.multiline,
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.white.withOpacity(0.87),
+                          ),
+                          onChanged: (String code) {
+                            handleTextChange(file, code, 'BEFORE');
+                            getLineInformation(localContext);
+                          },
+                        ),
+                      Container(
+                        decoration: file.hasRegion
+                            ? BoxDecoration(
+                                border: Border(
+                                  left: BorderSide(
+                                    width: 5,
+                                    color: file.region.condition
+                                        ? Colors.green
+                                        : Colors.grey,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        child: TextField(
+                          smartQuotesType: SmartQuotesType.disabled,
+                          smartDashesType: SmartDashesType.disabled,
+                          controller: inController,
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            fillColor: file.hasRegion
+                                ? file.region.color
+                                : widget.options.editorBackgroundColor,
+                            filled: true,
+                            isDense: true,
+                            contentPadding: EdgeInsets.only(
+                              left: 10,
+                              right: widget.options.wrap ? _initialWidth : 0,
+                              top: file.hasRegion ? 0 : 10,
+                            ),
+                          ),
+                          onChanged: (String code) {
+                            handleTextChange(file, code, 'IN');
+                          },
+                          maxLines: null,
+                          keyboardType: TextInputType.multiline,
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.white.withOpacity(0.87),
                           ),
                         ),
-                      )
-                    : null,
-                child: TextField(
-                  controller: inController,
-                  decoration: InputDecoration(
-                    border: InputBorder.none,
-                    fillColor: file.hasRegion
-                        ? file.region.color
-                        : widget.options.editorBackgroundColor,
-                    filled: true,
-                    isDense: true,
-                    contentPadding: EdgeInsets.only(
-                      left: 10,
-                      top: file.hasRegion ? 0 : 10,
-                    ),
-                  ),
-                  onChanged: (String event) {
-                    handleTextChange(file, event, 'IN');
-                  },
-                  maxLines: null,
-                  style: TextStyle(
-                    fontSize: 18,
-                    color: Colors.white.withOpacity(0.87),
-                  ),
-                ),
-              ),
-              if (file.hasRegion)
-                SizedBox(
-                  width: 2500,
-                  child: TextField(
-                    controller: afterController,
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      filled: true,
-                      fillColor: widget.options.editorBackgroundColor,
-                      contentPadding: const EdgeInsets.only(
-                        left: 10,
                       ),
-                      isDense: true,
-                    ),
-                    maxLines: null,
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.white.withOpacity(0.87),
-                    ),
-                    onChanged: (String event) {
-                      handleTextChange(file, event, 'AFTER');
-                    },
-                  ),
-                ),
+                      if (file.hasRegion)
+                        TextField(
+                          smartQuotesType: SmartQuotesType.disabled,
+                          smartDashesType: SmartDashesType.disabled,
+                          controller: afterController,
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            filled: true,
+                            fillColor: widget.options.editorBackgroundColor,
+                            contentPadding: EdgeInsets.only(
+                              left: 10,
+                              right: widget.options.wrap ? _initialWidth : 0,
+                            ),
+                            isDense: true,
+                          ),
+                          maxLines: null,
+                          keyboardType: TextInputType.multiline,
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.white.withOpacity(0.87),
+                          ),
+                          onChanged: (String code) {
+                            handleTextChange(file, code, 'AFTER');
+                          },
+                        )
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         )
